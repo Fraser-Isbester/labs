@@ -27,4 +27,10 @@ export const PROJECTS: ProjectConfig[] = [
     spa: true,
     emoji: '🏓',
   },
+  {
+    slug: 'cloudsql-autoscaler',
+    title: 'cloudsql-autoscaler',
+    description: 'An autoscaling controller for GCP Cloud SQL DB instances.',
+    emoji: '🛢️',
+  },
 ];

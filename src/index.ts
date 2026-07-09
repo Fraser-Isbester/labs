@@ -1,13 +1,10 @@
 import { PROJECTS, ProjectConfig } from './projects';
-
-export interface Env {
-  ASSETS: Fetcher;
-}
+import { LANDING_HTML } from './landing';
 
 const GITHUB_ORIGIN = 'https://fraser-isbester.github.io';
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
 
@@ -25,7 +22,7 @@ export default {
 
     // /labs and /labs/ → landing page
     if (path === '/labs' || path === '/labs/') {
-      return serveAsset(env, request, '/index.html');
+      return landingResponse();
     }
 
     // /labs/<slug> (no trailing slash) → add trailing slash so relative assets resolve
@@ -43,28 +40,35 @@ export default {
 
       if (!project) {
         // Unknown slug → return landing with 404 status
-        return serveAsset(env, request, '/index.html', 404);
+        return landingResponse(404);
       }
 
       const upstream = `${GITHUB_ORIGIN}/${slug}${rest}${url.search}`;
       return proxyUpstream(request, upstream, url, project);
     }
 
-    // Pass through to static assets (styles, favicon, etc.)
-    return env.ASSETS.fetch(request);
+    // Bare /<slug>/... — some project builds bake in root-absolute asset
+    // paths (e.g. /pickleball/assets/x.js) instead of /labs/<slug>/...
+    // Proxy these too so those requests don't 404.
+    const barePath = path.match(/^\/([^/]+)(\/.*)?$/);
+    if (barePath) {
+      const project = PROJECTS.find(p => p.slug === barePath[1]);
+      if (project) {
+        const rest = barePath[2] ?? '/';
+        const upstream = `${GITHUB_ORIGIN}/${project.slug}${rest}${url.search}`;
+        return proxyUpstream(request, upstream, url, project);
+      }
+    }
+
+    return landingResponse(404);
   },
 };
 
-async function serveAsset(
-  env: Env,
-  request: Request,
-  assetPath: string,
-  status = 200,
-): Promise<Response> {
-  const assetUrl = new URL(assetPath, request.url);
-  const resp = await env.ASSETS.fetch(new Request(assetUrl.toString(), { method: 'GET' }));
-  if (status === resp.status) return resp;
-  return new Response(resp.body, { status, headers: resp.headers });
+function landingResponse(status = 200): Response {
+  return new Response(LANDING_HTML, {
+    status,
+    headers: { 'Content-Type': 'text/html; charset=utf-8' },
+  });
 }
 
 async function proxyUpstream(

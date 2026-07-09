@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+export const LANDING_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
@@ -133,6 +133,12 @@
       <p class="card-desc">Tournament scheduler — generate optimally balanced rounds for any number of players.</p>
       <span class="card-link">/labs/pickleball →</span>
     </a>
+    <a class="card" href="/labs/cloudsql-autoscaler/">
+      <span class="card-emoji">🛢️</span>
+      <div class="card-title">cloudsql-autoscaler</div>
+      <p class="card-desc">An autoscaling controller for GCP Cloud SQL DB instances.</p>
+      <span class="card-link">/labs/cloudsql-autoscaler →</span>
+    </a>
   </div>
 
   <footer>
@@ -141,3 +147,4 @@
 </div>
 </body>
 </html>
+`;
