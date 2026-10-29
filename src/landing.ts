@@ -139,6 +139,12 @@ export const LANDING_HTML = `<!DOCTYPE html>
       <p class="card-desc">An autoscaling controller for GCP Cloud SQL DB instances.</p>
       <span class="card-link">/labs/cloudsql-autoscaler →</span>
     </a>
+    <a class="card" href="/labs/muncheni/">
+      <span class="card-emoji">🔭</span>
+      <div class="card-title">muncheni</div>
+      <p class="card-desc">Open-source LLM inference on llm-d, with a trace of every request for every customer.</p>
+      <span class="card-link">/labs/muncheni →</span>
+    </a>
   </div>
 
   <footer>

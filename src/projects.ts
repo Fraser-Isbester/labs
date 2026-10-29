@@ -33,4 +33,10 @@ export const PROJECTS: ProjectConfig[] = [
     description: 'An autoscaling controller for GCP Cloud SQL DB instances.',
     emoji: '🛢️',
   },
+  {
+    slug: 'muncheni',
+    title: 'muncheni',
+    description: 'Open-source LLM inference on llm-d, with a trace of every request for every customer.',
+    emoji: '🔭',
+  },
 ];
