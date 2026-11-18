@@ -22,3 +22,11 @@ jobs:
         run: npx wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      # Assets-only Worker serving the static splash on isbester.com + www.
+      # Its custom domains replace the parked apex/www A records; wrangler
+      # does that automatically when not attached to a TTY.
+      - name: Deploy apex splash to Cloudflare Workers
+        run: npx wrangler deploy --config apex/wrangler.jsonc
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
