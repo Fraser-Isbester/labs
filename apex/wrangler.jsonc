@@ -1,0 +1,16 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  // Assets-only Worker for the apex splash. No `main`: Cloudflare serves
+  // public/ directly, so there is no code path to break or bill for.
+  "name": "isbester-apex",
+  "compatibility_date": "2025-07-01",
+  "assets": {
+    "directory": "./public",
+    "not_found_handling": "single-page-application"
+  },
+  "workers_dev": false,
+  "routes": [
+    { "pattern": "isbester.com", "custom_domain": true },
+    { "pattern": "www.isbester.com", "custom_domain": true }
+  ]
+}

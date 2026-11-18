@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#060608">
+<title>isbester</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #060608; overflow: hidden; }
+  body {
+    background: radial-gradient(ellipse at 50% 45%, #0d0d12 0%, #060608 60%, #020203 100%);
+    cursor: crosshair;
+    -webkit-tap-highlight-color: transparent;
+  }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  .mark, .whisper {
+    position: fixed; left: 0; right: 0; text-align: center; pointer-events: none;
+    font: 300 11px/1 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    letter-spacing: .6em; text-indent: .6em; color: #d8d4ca;
+    user-select: none;
+  }
+  .mark { bottom: max(22px, env(safe-area-inset-bottom)); opacity: .16; }
+  .whisper { bottom: calc(max(22px, env(safe-area-inset-bottom)) + 26px); opacity: 0; transition: opacity 2.4s ease; letter-spacing: .35em; text-indent: .35em; }
+  .whisper.on { opacity: .22; }
+</style>
+</head>
+<body>
+<canvas id="c" aria-hidden="true"></canvas>
+<div class="mark">isbester</div>
+<div class="whisper" id="w"></div>
+<script>
+(() => {
+  'use strict';
+  const cv = document.getElementById('c');
+  const ctx = cv.getContext('2d', { alpha: true });
+  const whisper = document.getElementById('w');
+  const rm = matchMedia('(prefers-reduced-motion: reduce)');
+
+  let W = 0, H = 0, dpr = 1, cx = 0, cy = 0;
+  // Node state (struct-of-arrays: thousands of nodes, keep GC out of the frame loop).
+  let N = 0, X, Y, PX, PY, BX, BY, PH;
+  // Edge state.
+  let E = 0, EA, EB, ER, ET, EBROKE, EGROW, EWAIT;
+  let gap = 30;
+
+  const ptr = { x: -1e4, y: -1e4, on: false, last: 0 };
+  let R = 150;                   // cursor influence radius (css px)
+  let eyes = [], eyeA = 0, blink = 1, nextBlink = 0;
+  let nextPluck = 0, snaps = 0, spoke = false;
+
+  // ---------- construction: an orb web whose spiral overflows the viewport ----------
+  function build() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = innerWidth; H = innerHeight;
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+
+    cx = W * (0.38 + Math.random() * 0.24);
+    cy = H * (0.36 + Math.random() * 0.2);
+    gap = Math.max(20, Math.min(34, Math.min(W, H) / 24));
+    R = Math.max(110, Math.min(190, Math.min(W, H) * 0.2));
+    const margin = gap * 2.5;
+    const maxR = Math.hypot(Math.max(cx, W - cx), Math.max(cy, H - cy)) + margin;
+    const r0 = gap * 1.8;
+    const maxArc = gap * 1.9;
+
+    const xs = [], ys = [], keep = [];
+    const ea = [], eb = [], et = [];
+    const id = (x, y) => {
+      const k = x > -margin && x < W + margin && y > -margin && y < H + margin;
+      xs.push(x); ys.push(y); keep.push(k); return xs.length - 1;
+    };
+    const link = (a, b, t) => { ea.push(a); eb.push(b); et.push(t); };
+
+    const hub = id(cx, cy);
+    let M = 14;
+    let ang = [];
+    for (let j = 0; j < M; j++) ang.push((j / M) * Math.PI * 2 + (Math.random() - 0.5) * 0.25);
+    let prev = null, prevM = 0, prevAng = null, lastOfPrev = -1;
+
+    for (let i = 0, r = r0; r < maxR; i++, r += gap * (0.92 + Math.random() * 0.16)) {
+      // Spokes fork outward so spiral segments stay roughly constant length.
+      let forked = false;
+      if ((2 * Math.PI * r) / M > maxArc) {
+        const na = [];
+        for (let j = 0; j < M; j++) {
+          const a0 = ang[j], a1 = j + 1 < M ? ang[j + 1] : ang[0] + Math.PI * 2;
+          na.push(a0, (a0 + a1) / 2 + (Math.random() - 0.5) * 0.04);
+        }
+        ang = na; M *= 2; forked = true;
+      }
+      const ring = new Array(M);
+      for (let j = 0; j < M; j++) {
+        const a = ang[j];
+        // Radius climbs with angle: consecutive rings form one continuous spiral.
+        const rr = r + gap * (((a % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)) / (Math.PI * 2)
+          + (Math.random() - 0.5) * gap * 0.22;
+        ring[j] = id(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr);
+      }
+      for (let j = 0; j < M; j++) {
+        if (!prev) link(hub, ring[j], 0);
+        else if (!forked) link(prev[j], ring[j], 0);
+        else if (j % 2 === 0) link(prev[j / 2], ring[j], 0);
+        else { // a new spoke hangs from a V brace across the two inner neighbours
+          link(prev[(j - 1) / 2], ring[j], 0);
+          link(prev[((j + 1) / 2) % prevM], ring[j], 0);
+        }
+        if (j + 1 < M) link(ring[j], ring[j + 1], 1);
+      }
+      if (lastOfPrev >= 0) link(lastOfPrev, ring[0], 1);
+      lastOfPrev = ring[M - 1];
+      // Messy hub: a few cross-threads on the first rings.
+      if (i < 2) for (let k = 0; k < 5; k++) {
+        const a = ring[(Math.random() * M) | 0], b = ring[(Math.random() * M) | 0];
+        if (a !== b) link(a, b, 2);
+      }
+      prev = ring; prevM = M; prevAng = ang;
+    }
+
+    // Compact: drop nodes outside the viewport margin and any edge touching one.
+    const map = new Int32Array(xs.length).fill(-1);
+    let n = 0;
+    for (let i = 0; i < xs.length; i++) if (keep[i]) map[i] = n++;
+    N = n;
+    X = new Float32Array(N); Y = new Float32Array(N); PX = new Float32Array(N); PY = new Float32Array(N);
+    BX = new Float32Array(N); BY = new Float32Array(N); PH = new Float32Array(N);
+    for (let i = 0; i < xs.length; i++) if (map[i] >= 0) {
+      const k = map[i];
+      X[k] = PX[k] = BX[k] = xs[i]; Y[k] = PY[k] = BY[k] = ys[i]; PH[k] = Math.random() * 6.283;
+    }
+    const A = [], B = [], T = [];
+    for (let e = 0; e < ea.length; e++) {
+      const a = map[ea[e]], b = map[eb[e]];
+      if (a >= 0 && b >= 0) { A.push(a); B.push(b); T.push(et[e]); }
+    }
+    E = A.length;
+    EA = Int32Array.from(A); EB = Int32Array.from(B); ET = Uint8Array.from(T);
+    ER = new Float32Array(E); EBROKE = new Uint8Array(E); EGROW = new Float32Array(E); EWAIT = new Float32Array(E);
+    for (let e = 0; e < E; e++) ER[e] = Math.hypot(X[EA[e]] - X[EB[e]], Y[EA[e]] - Y[EB[e]]);
+
+    // Something small and many-eyed near the hub.
+    eyes = [];
+    const s = gap * 0.16;
+    const layout = [[-1.6, 0], [-0.55, -0.35], [0.55, -0.35], [1.6, 0], [-0.9, 0.9], [-0.3, 0.75], [0.3, 0.75], [0.9, 0.9]];
+    for (const [ex, ey] of layout) eyes.push([cx + ex * s, cy + ey * s - gap * 0.2, ex === -0.55 || ex === 0.55 ? 1.6 : 1]);
+  }
+
+  // ---------- simulation ----------
+  const DAMP = 0.93, K_HOME = 0.01, K_SPRING = 0.2, SNAP = 1.45;
+  let t = 0;
+
+  function step(now) {
+    t += 1 / 60;
+    const idle = now - ptr.last;
+    const on = ptr.on;
+    const mx = ptr.x, my = ptr.y, R2 = R * R, TR = R * 1.7, TR2 = TR * TR;
+    // Whole web breathes: tiny rotation about the hub plus a slow travelling sway.
+    const rot = Math.sin(t * 0.07) * 0.006, cr = Math.cos(rot), sr = Math.sin(rot);
+    const gust = 0.6 + 0.4 * Math.sin(t * 0.13);
+
+    for (let i = 0; i < N; i++) {
+      const bx = BX[i] - cx, by = BY[i] - cy;
+      const sway = Math.sin(t * 0.45 + BX[i] * 0.004 + BY[i] * 0.002) * 4 * gust;
+      const hx = cx + bx * cr - by * sr + sway + Math.sin(t * 0.9 + PH[i]) * 0.8;
+      const hy = cy + bx * sr + by * cr + sway * 0.5 + Math.cos(t * 0.8 + PH[i]) * 0.8;
+      let x = X[i], y = Y[i];
+      const vx = (x - PX[i]) * DAMP, vy = (y - PY[i]) * DAMP;
+      PX[i] = x; PY[i] = y;
+      let fx = (hx - x) * K_HOME, fy = (hy - y) * K_HOME;
+      if (on) {
+        const dx = x - mx, dy = y - my, d2 = dx * dx + dy * dy;
+        if (d2 < TR2) {
+          const d = Math.sqrt(d2) + 0.001;
+          if (d2 < R2) { const f = (1 - d / R); const p = f * f * 7.5; fx += dx / d * p; fy += dy / d * p; }
+          const q = (1 - d / TR) * 0.9;           // tremble
+          fx += (Math.random() - 0.5) * q; fy += (Math.random() - 0.5) * q;
+        }
+      }
+      X[i] = x + vx + fx; Y[i] = y + vy + fy;
+    }
+
+    for (let pass = 0; pass < 2; pass++) for (let e = 0; e < E; e++) {
+      if (EBROKE[e]) continue;
+      const a = EA[e], b = EB[e];
+      const dx = X[b] - X[a], dy = Y[b] - Y[a];
+      const d = Math.sqrt(dx * dx + dy * dy) + 0.0001;
+      const ratio = d / ER[e];
+      if (on && pass === 0 && ratio > SNAP && Math.random() < 0.12) {
+        const ux = (X[a] + X[b]) / 2 - mx, uy = (Y[a] + Y[b]) / 2 - my;
+        if (ux * ux + uy * uy < R2 * 1.4) { snap(e, dx / d, dy / d); continue; }
+      }
+      if (ratio < 1) continue;                   // silk goes slack, it doesn't push
+      const c = (d - ER[e]) / d * 0.5 * K_SPRING;
+      X[a] += dx * c; Y[a] += dy * c; X[b] -= dx * c; Y[b] -= dy * c;
+    }
+
+    // Broken threads re-knit once the cursor has moved away from both ends.
+    for (let e = 0; e < E; e++) {
+      if (!EBROKE[e]) continue;
+      const a = EA[e], b = EB[e];
+      const far = !on || (dist2(X[a], Y[a], mx, my) > R2 * 1.7 && dist2(X[b], Y[b], mx, my) > R2 * 1.7);
+      if (!far) { EWAIT[e] = 0; EGROW[e] = 0; continue; }
+      if (EWAIT[e] < 0.7) { EWAIT[e] += 1 / 60; continue; }
+      EGROW[e] += (1 / 60) / 1.4;
+      if (EGROW[e] >= 1) { EBROKE[e] = 0; EGROW[e] = 0; }
+    }
+
+    // Idle: something plucks the web now and then.
+    if (now > nextPluck) {
+      nextPluck = now + 2500 + Math.random() * 5000;
+      if (!on || idle > 2500) {
+        for (let tries = 0; tries < 20; tries++) {
+          const i = (Math.random() * N) | 0;
+          if (X[i] > 0 && X[i] < W && Y[i] > 0 && Y[i] < H) {
+            const a = Math.random() * 6.283, m = 3 + Math.random() * 4;
+            PX[i] -= Math.cos(a) * m; PY[i] -= Math.sin(a) * m;
+            break;
+          }
+        }
+      }
+    }
+
+    // The eyes come out when nothing is near, and vanish fast when approached.
+    const nearHub = on && dist2(mx, my, cx, cy) < (R * 2.4) ** 2;
+    const want = nearHub ? 0 : (!on || idle > 4000 ? 1 : 0.35);
+    eyeA += (want - eyeA) * (want < eyeA ? 0.18 : 0.004);
+    if (now > nextBlink) { blink = 0; nextBlink = now + 3000 + Math.random() * 6000; }
+    blink += (1 - blink) * 0.08;
+  }
+
+  function snap(e, ux, uy) {
+    EBROKE[e] = 1; EGROW[e] = 0; EWAIT[e] = 0;
+    // Recoil: the two ends fly apart a little.
+    const a = EA[e], b = EB[e];
+    PX[a] += ux * 2.5; PY[a] += uy * 2.5; PX[b] -= ux * 2.5; PY[b] -= uy * 2.5;
+    if (++snaps === 6 && !spoke) {
+      spoke = true;
+      whisper.textContent = 'it felt that';
+      whisper.classList.add('on');
+      setTimeout(() => whisper.classList.remove('on'), 5200);
+    }
+  }
+
+  const dist2 = (ax, ay, bx, by) => { const dx = ax - bx, dy = ay - by; return dx * dx + dy * dy; };
+
+  // ---------- rendering ----------
+  const LEVELS = [0.1, 0.17, 0.26, 0.38, 0.56];
+  const buckets = LEVELS.map(() => []);
+
+  function draw(staticMode) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    for (const b of buckets) b.length = 0;
+    const on = ptr.on && !staticMode;
+    const mx = ptr.x, my = ptr.y, PR = R * 2.4;
+
+    for (let e = 0; e < E; e++) {
+      if (EBROKE[e]) continue;
+      const a = EA[e], b = EB[e];
+      const dx = X[b] - X[a], dy = Y[b] - Y[a];
+      const tension = Math.max(0, Math.sqrt(dx * dx + dy * dy) / ER[e] - 1);
+      let v = 0.06 + tension * 0.9 + (ET[e] === 0 ? 0.03 : 0);
+      if (on) {
+        const d = Math.sqrt(dist2((X[a] + X[b]) / 2, (Y[a] + Y[b]) / 2, mx, my));
+        if (d < PR) v += (1 - d / PR) * 0.28;
+      }
+      let k = 0;
+      while (k < LEVELS.length - 1 && v > LEVELS[k + 1]) k++;
+      buckets[k].push(e);
+    }
+
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 0.75;
+    for (let k = 0; k < LEVELS.length; k++) {
+      const list = buckets[k];
+      if (!list.length) continue;
+      ctx.strokeStyle = `rgba(214,210,198,${LEVELS[k]})`;
+      ctx.beginPath();
+      for (let n = 0; n < list.length; n++) {
+        const e = list[n], a = EA[e], b = EB[e];
+        ctx.moveTo(X[a], Y[a]);
+        if (ET[e] === 1) {
+          // Spiral silk sags toward the hub.
+          const mxp = (X[a] + X[b]) / 2, myp = (Y[a] + Y[b]) / 2;
+          const hx = cx - mxp, hy = cy - myp, hl = Math.hypot(hx, hy) + 1e-3;
+          const s = ER[e] * 0.07;
+          ctx.quadraticCurveTo(mxp + hx / hl * s, myp + hy / hl * s, X[b], Y[b]);
+        } else ctx.lineTo(X[b], Y[b]);
+      }
+      ctx.stroke();
+    }
+
+    // Re-knitting threads grow in from both ends.
+    ctx.strokeStyle = 'rgba(214,210,198,0.3)';
+    ctx.beginPath();
+    for (let e = 0; e < E; e++) {
+      if (!EBROKE[e] || EGROW[e] <= 0) continue;
+      const a = EA[e], b = EB[e], g = EGROW[e] / 2;
+      const dx = X[b] - X[a], dy = Y[b] - Y[a];
+      ctx.moveTo(X[a], Y[a]); ctx.lineTo(X[a] + dx * g, Y[a] + dy * g);
+      ctx.moveTo(X[b], Y[b]); ctx.lineTo(X[b] - dx * g, Y[b] - dy * g);
+    }
+    ctx.stroke();
+
+    // Junction beads, only where the cursor is.
+    if (on) {
+      ctx.fillStyle = 'rgba(230,226,214,0.5)';
+      ctx.beginPath();
+      const BR2 = (R * 1.5) ** 2;
+      for (let i = 0; i < N; i++) {
+        if (dist2(X[i], Y[i], mx, my) < BR2) { ctx.moveTo(X[i] + 1, Y[i]); ctx.arc(X[i], Y[i], 1, 0, 6.283); }
+      }
+      ctx.fill();
+    }
+
+    if (!staticMode && eyeA > 0.01) {
+      const a = eyeA * blink;
+      for (const [ex, ey, s] of eyes) {
+        const r = 1.3 * s;
+        const g = ctx.createRadialGradient(ex, ey, 0, ex, ey, r * 5);
+        g.addColorStop(0, `rgba(190,40,34,${0.75 * a})`);
+        g.addColorStop(0.25, `rgba(150,20,20,${0.25 * a})`);
+        g.addColorStop(1, 'rgba(120,0,0,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(ex - r * 5, ey - r * 5, r * 10, r * 10);
+      }
+    }
+  }
+
+  // ---------- loop / lifecycle ----------
+  let raf = 0, acc = 0, lastT = 0;
+  const probe = { n: 0, sum: 0 };
+  function frame(now) {
+    raf = requestAnimationFrame(frame);
+    if (!lastT) lastT = now;
+    const dt = now - lastT;
+    acc += Math.min(dt, 100); lastT = now;
+    // Adaptive quality: if the first ~2s run slow at high DPI, drop to 1x backing store.
+    if (probe.n < 120) {
+      probe.n++; probe.sum += dt;
+      if (probe.n === 120 && probe.sum / 120 > 22 && dpr > 1) {
+        dpr = 1; cv.width = W; cv.height = H;
+      }
+    }
+    let steps = 0;
+    // Fixed 60 Hz physics; at most 2 catch-up steps so a slow frame can't spiral.
+    while (acc >= 1000 / 60 && steps < 2) { step(now); acc -= 1000 / 60; steps++; }
+    if (steps === 2) acc = 0;
+    if (steps) draw(false);
+  }
+
+  function start() {
+    cancelAnimationFrame(raf); raf = 0; lastT = 0; acc = 0; probe.n = 0; probe.sum = 0;
+    build();
+    if (rm.matches) {
+      // Reduced motion: let the web settle once, then hold perfectly still.
+      ptr.on = false;
+      draw(true);
+    } else {
+      nextPluck = performance.now() + 1500;
+      nextBlink = performance.now() + 2000;
+      raf = requestAnimationFrame(frame);
+    }
+  }
+
+  function setPtr(e) {
+    // Some engines synthesize a zero-movement pointermove at (0,0) on load; it isn't a person.
+    if (e.type === 'pointermove' && e.clientX === 0 && e.clientY === 0 && !e.movementX && !e.movementY) return;
+    ptr.x = e.clientX; ptr.y = e.clientY; ptr.on = true; ptr.last = performance.now();
+  }
+  addEventListener('pointermove', setPtr, { passive: true });
+  addEventListener('pointerdown', setPtr, { passive: true });
+  addEventListener('pointerup', e => { if (e.pointerType !== 'mouse') ptr.on = false; }, { passive: true });
+  addEventListener('pointercancel', () => { ptr.on = false; }, { passive: true });
+  document.addEventListener('pointerleave', () => { ptr.on = false; });
+  document.documentElement.addEventListener('mouseleave', () => { ptr.on = false; });
+  addEventListener('blur', () => { ptr.on = false; });
+
+  let rt = 0;
+  addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(start, 150); });
+  rm.addEventListener ? rm.addEventListener('change', start) : rm.addListener(start);
+
+  start();
+})();
+</script>
+</body>
+</html>
