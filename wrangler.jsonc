@@ -3,6 +3,14 @@
   "name": "labs",
   "main": "src/index.ts",
   "compatibility_date": "2025-07-01",
+  // Static files (resume PDF) reachable only through env.ASSETS: with
+  // run_worker_first every request still hits the Worker, so no existing
+  // path changes behaviour.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
   "routes": [
     {
       "pattern": "fraser.isbester.com/*",

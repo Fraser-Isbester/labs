@@ -3,8 +3,12 @@ import { LANDING_HTML } from './landing';
 
 const GITHUB_ORIGIN = 'https://fraser-isbester.github.io';
 
+interface Env {
+  ASSETS: Fetcher;
+}
+
 export default {
-  async fetch(request: Request): Promise<Response> {
+  async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
 
@@ -13,6 +17,10 @@ export default {
     if (vanityProject) {
       const upstream = `${GITHUB_ORIGIN}/${vanityProject.slug}${path}${url.search}`;
       return proxyUpstream(request, upstream, url, vanityProject);
+    }
+
+    if (path === '/resume' || path === '/resume.pdf') {
+      return resumeResponse(request, env);
     }
 
     // Root → redirect to /labs
@@ -63,6 +71,18 @@ export default {
     return landingResponse(404);
   },
 };
+
+async function resumeResponse(request: Request, env: Env): Promise<Response> {
+  // Forward the client's headers so ETag/Range revalidation still works.
+  const asset = await env.ASSETS.fetch(new URL('/resume.pdf', request.url), {
+    method: request.method === 'HEAD' ? 'HEAD' : 'GET',
+    headers: request.headers,
+  });
+  const headers = new Headers(asset.headers);
+  // Render in the browser rather than download; name it sensibly if saved.
+  headers.set('Content-Disposition', 'inline; filename="Fraser-Isbester-Resume.pdf"');
+  return new Response(asset.body, { status: asset.status, headers });
+}
 
 function landingResponse(status = 200): Response {
   return new Response(LANDING_HTML, {
